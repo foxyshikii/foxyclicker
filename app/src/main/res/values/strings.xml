@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">Auto Clicker</string>
+    <string name="app_name">Foxy Clicker</string>
+    <color name="ic_bg">#34405F</color>
 </resources>
