@@ -479,3 +479,4 @@ class OverlayService : Service() {
         panel = null
         super.onDestroy()
     }
+}
