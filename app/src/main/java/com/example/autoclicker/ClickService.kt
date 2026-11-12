@@ -10,6 +10,9 @@ import android.view.accessibility.AccessibilityEvent
 class ClickService : AccessibilityService() {
     companion object { var instance: ClickService? = null }
 
+    // delayMs = jeda setelah klik titik ini, sebelum klik titik berikutnya
+    class Target(val x: Float, val y: Float, val delayMs: Long)
+
     private val handler = Handler(Looper.getMainLooper())
     private var running = false
     var onFinish: (() -> Unit)? = null
@@ -19,31 +22,30 @@ class ClickService : AccessibilityService() {
     override fun onInterrupt() {}
     override fun onDestroy() { instance = null; super.onDestroy() }
 
-    // intervalMs = 0 -> semua titik diklik sekali saja, lalu berhenti
-    fun start(points: List<Pair<Float, Float>>, intervalMs: Long, startAt: Long) {
+    // loop = false -> semua titik diklik sekali saja, lalu berhenti
+    fun start(targets: List<Target>, loop: Boolean, startAt: Long) {
         stop()
-        if (points.isEmpty()) return
+        if (targets.isEmpty()) return
         running = true
         var i = 0
-        val delay = maxOf(0L, startAt - System.currentTimeMillis())
+        val first = maxOf(0L, startAt - System.currentTimeMillis())
         handler.postDelayed(object : Runnable {
             override fun run() {
                 if (!running) return
-                val p = points[i]
-                tap(p.first, p.second)
+                val t = targets[i]
+                tap(t.x, t.y)
                 i++
-                if (i >= points.size) {
-                    if (intervalMs <= 0) {
+                if (i >= targets.size) {
+                    if (!loop) {
                         running = false
                         onFinish?.invoke()
                         return
                     }
                     i = 0
                 }
-                val gap = if (intervalMs <= 0) 150L else maxOf(intervalMs, 60L)
-                handler.postDelayed(this, gap)
+                handler.postDelayed(this, maxOf(t.delayMs, 60L))
             }
-        }, delay)
+        }, first)
     }
 
     fun stop() {
