@@ -41,4 +41,21 @@ class ClickService : AccessibilityService() {
                     i = 0
                 }
                 val gap = if (intervalMs <= 0) 150L else maxOf(intervalMs, 60L)
-                handler.postDelayed(this,
+                handler.postDelayed(this, gap)
+            }
+        }, delay)
+    }
+
+    fun stop() {
+        running = false
+        handler.removeCallbacksAndMessages(null)
+    }
+
+    private fun tap(x: Float, y: Float) {
+        val path = Path().apply { moveTo(x, y) }
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+            .build()
+        dispatchGesture(g, null, null)
+    }
+}
