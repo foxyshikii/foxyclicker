@@ -24,3 +24,4 @@
                 android:resource="@xml/click_service" />
         </service>
     </application>
+</manifest>
