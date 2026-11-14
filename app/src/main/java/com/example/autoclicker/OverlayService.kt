@@ -6,9 +6,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -28,6 +31,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
+import kotlin.math.min
 
 class OverlayService : Service() {
     companion object {
@@ -49,11 +53,11 @@ class OverlayService : Service() {
     private val uiHandler = Handler(Looper.getMainLooper())
     private var lineView: LineView? = null
     private var panel: LinearLayout? = null
-    private var bubble: FrameLayout? = null
-    private var chip: TextView? = null
-    private var playBtn: FrameLayout? = null
     private var playIcon: IconView? = null
-    private var bar: View? = null
+    private var plusV: View? = null
+    private var minusV: View? = null
+    private var gearV: View? = null
+    private var closeV: View? = null
     private var dialog: AlertDialog? = null
     private var hidden = false
     private var state = IDLE
@@ -61,7 +65,7 @@ class OverlayService : Service() {
 
     private val ticker = object : Runnable {
         override fun run() {
-            refreshChip()
+            tickState()
             uiHandler.postDelayed(this, 500L)
         }
     }
@@ -401,7 +405,7 @@ class OverlayService : Service() {
 
     private fun openSettings() {
         closeDialog()
-        val d = Dialogs.settingsDialog(this) { refreshChip() }
+        val d = Dialogs.settingsDialog(this) { }
         dialog = d
         Dialogs.show(d, true)
     }
@@ -416,134 +420,74 @@ class OverlayService : Service() {
 
     // ---------- panel ----------
 
-    private fun btn(kind: Int, fill: Int, icon: Int, onClick: () -> Unit): FrameLayout {
-        val f = FrameLayout(this)
-        val g = GradientDrawable()
-        g.shape = GradientDrawable.OVAL
-        g.setColor(fill)
-        f.background = g
-        f.addView(IconView(this, kind, icon), FrameLayout.LayoutParams(ui.dp(40), ui.dp(40)))
-        f.setOnClickListener { onClick() }
-        val lp = LinearLayout.LayoutParams(ui.dp(40), ui.dp(40))
-        lp.setMargins(0, ui.dp(3), 0, ui.dp(3))
-        f.layoutParams = lp
-        return f
+    private fun icon(kind: Int, color: Int, onClick: () -> Unit): IconView {
+        val v = IconView(this, kind, color)
+        v.setOnClickListener { onClick() }
+        v.layoutParams = LinearLayout.LayoutParams(ui.dp(48), ui.dp(48))
+        return v
     }
 
     private fun buildPanel() {
-        val chipTv = TextView(this)
-        chipTv.textSize = 11f
-        chipTv.gravity = Gravity.CENTER
-        chipTv.setTextColor(pal.barIcon)
-        chipTv.setPadding(ui.dp(10), ui.dp(4), ui.dp(10), ui.dp(4))
-        chipTv.background = ui.rounded(pal.barBg, 14)
-        chip = chipTv
-
-        val playFrame = btn(IconView.PLAY, pal.acc, Color.WHITE) { toggleRun() }
-        playBtn = playFrame
-        playIcon = playFrame.getChildAt(0) as IconView
-
-        val col = LinearLayout(this)
-        col.orientation = LinearLayout.VERTICAL
-        col.gravity = Gravity.CENTER_HORIZONTAL
-        col.background = ui.rounded(pal.barBg, 26)
-        col.setPadding(ui.dp(5), ui.dp(4), ui.dp(5), ui.dp(4))
-        col.addView(playFrame)
-        col.addView(btn(IconView.PLUS, Color.TRANSPARENT, pal.barIcon) { addPoint() })
-        col.addView(btn(IconView.MINUS, Color.TRANSPARENT, pal.barIcon) { removeLast() })
-        col.addView(btn(IconView.GEAR, Color.TRANSPARENT, pal.barIcon) { openSettings() })
-        col.addView(btn(IconView.HIDE, Color.TRANSPARENT, pal.barIcon) { setHidden(true) })
-        col.addView(btn(IconView.CLOSE, Color.TRANSPARENT, pal.barIcon) { stopSelf() })
-        bar = col
+        val pi = icon(IconView.PLAY, Color.rgb(33, 150, 243)) { toggleRun() }
+        playIcon = pi
+        val plus = icon(IconView.PLUS, Color.rgb(76, 175, 80)) { addPoint() }
+        val minus = icon(IconView.MINUS, Color.rgb(244, 67, 54)) { removeLast() }
+        val gear = icon(IconView.GEAR, Color.rgb(160, 168, 190)) { openSettings() }
+        val close = icon(IconView.CLOSE, Color.rgb(244, 67, 54)) { stopSelf() }
+        close.visibility = View.GONE
+        plusV = plus
+        minusV = minus
+        gearV = gear
+        closeV = close
+        val grip = MoveView(this, Color.rgb(160, 168, 190))
+        grip.layoutParams = LinearLayout.LayoutParams(ui.dp(48), ui.dp(48))
 
         val pn = LinearLayout(this)
         pn.orientation = LinearLayout.VERTICAL
         pn.gravity = Gravity.CENTER_HORIZONTAL
-        val cl = LinearLayout.LayoutParams(ui.WRAP, ui.WRAP)
-        cl.bottomMargin = ui.dp(6)
-        pn.addView(chipTv, cl)
-        pn.addView(col)
+        pn.setPadding(ui.dp(4), ui.dp(6), ui.dp(4), ui.dp(6))
+        pn.background = ui.rounded(Color.argb(235, 22, 25, 36), 14)
+        pn.addView(pi)
+        pn.addView(plus)
+        pn.addView(minus)
+        pn.addView(gear)
+        pn.addView(close)
+        pn.addView(grip)
 
         val panelLp = makeLp(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            ui.dp(6), ui.dp(120)
+            0, ui.dp(160)
         )
         wm.addView(pn, panelLp)
-        drag(chipTv, pn, panelLp)
+        drag(grip, pn, panelLp, { toggleCollapse() })
         panel = pn
-
-        val bb = FrameLayout(this)
-        bb.addView(IconView(this, IconView.CURSOR, Color.WHITE), FrameLayout.LayoutParams(ui.dp(46), ui.dp(46)))
-        bb.visibility = View.GONE
-        bubble = bb
-        val bubbleLp = makeLp(ui.dp(46), ui.dp(46), ui.dp(6), ui.dp(120))
-        wm.addView(bb, bubbleLp)
-        drag(bb, bb, bubbleLp, { setHidden(false) })
-        paintBubble()
     }
 
-    private fun paintBubble() {
-        val bb = bubble ?: return
-        val g = GradientDrawable()
-        g.shape = GradientDrawable.OVAL
-        g.setColor(pal.acc)
-        val ring = when (state) {
-            RUNNING -> Color.rgb(34, 197, 94)
-            WAITING -> Color.rgb(250, 204, 21)
-            else -> Color.WHITE
-        }
-        g.setStroke(ui.dp(3), ring)
-        bb.background = g
-    }
-
-    private fun setHidden(h: Boolean) {
-        hidden = h
-        panel?.visibility = if (h) View.GONE else View.VISIBLE
-        bubble?.visibility = if (h) View.VISIBLE else View.GONE
-        setNodesVisible(!h)
+    private fun toggleCollapse() {
+        hidden = !hidden
+        val full = if (hidden) View.GONE else View.VISIBLE
+        plusV?.visibility = full
+        minusV?.visibility = full
+        gearV?.visibility = full
+        closeV?.visibility = if (hidden) View.VISIBLE else View.GONE
+        setNodesVisible(!hidden)
     }
 
     // ---------- status ----------
 
     private fun setState(s: Int) {
         state = s
-        val pb = playBtn
-        val pi = playIcon
-        if (pb != null && pi != null) {
-            val g = pb.background as GradientDrawable
-            when (s) {
-                RUNNING -> {
-                    g.setColor(Color.rgb(34, 160, 107))
-                    pi.set(IconView.PAUSE, Color.WHITE)
-                }
-                WAITING -> {
-                    g.setColor(Color.rgb(224, 161, 0))
-                    pi.set(IconView.PAUSE, Color.WHITE)
-                }
-                else -> {
-                    g.setColor(pal.acc)
-                    pi.set(IconView.PLAY, Color.WHITE)
-                }
-            }
+        val pi = playIcon ?: return
+        when (s) {
+            RUNNING -> pi.set(IconView.PAUSE, Color.rgb(34, 197, 94))
+            WAITING -> pi.set(IconView.PAUSE, Color.rgb(250, 204, 21))
+            else -> pi.set(IconView.PLAY, Color.rgb(33, 150, 243))
         }
-        paintBubble()
-        refreshChip()
     }
 
-    private fun refreshChip() {
-        val c = chip ?: return
-        val now = System.currentTimeMillis()
-        if (state == WAITING && now >= startAt) setState(RUNNING)
-        when (state) {
-            WAITING -> c.text = "Tunggu\n" + hms((startAt - now) / 1000)
-            RUNNING -> {
-                val svc = ClickService.instance
-                val n = if (svc != null) svc.clicks else 0
-                c.text = "Jalan " + n + "x\n" + hms((now - startAt) / 1000)
-            }
-            else -> c.text = "Siap"
-        }
+    private fun tickState() {
+        if (state == WAITING && System.currentTimeMillis() >= startAt) setState(RUNNING)
     }
 
     private fun toggleRun() {
@@ -621,14 +565,38 @@ class OverlayService : Service() {
             if (lv != null) wm.removeView(lv)
             val pn = panel
             if (pn != null) wm.removeView(pn)
-            val bb = bubble
-            if (bb != null) wm.removeView(bb)
         }
         panel = null
-        bubble = null
         lineView = null
         instance = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
+    }
+}
+
+private class MoveView(ctx: Context, private val color: Int) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = min(width, height) / 2f
+        p.color = color
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeJoin = Paint.Join.ROUND
+        p.strokeWidth = r * 0.12f
+        val a = r * 0.55f
+        val h = r * 0.2f
+        c.drawLine(cx - a, cy, cx + a, cy, p)
+        c.drawLine(cx, cy - a, cx, cy + a, p)
+        c.drawLine(cx - a, cy, cx - a + h, cy - h, p)
+        c.drawLine(cx - a, cy, cx - a + h, cy + h, p)
+        c.drawLine(cx + a, cy, cx + a - h, cy - h, p)
+        c.drawLine(cx + a, cy, cx + a - h, cy + h, p)
+        c.drawLine(cx, cy - a, cx - h, cy - a + h, p)
+        c.drawLine(cx, cy - a, cx + h, cy - a + h, p)
+        c.drawLine(cx, cy + a, cx - h, cy + a - h, p)
+        c.drawLine(cx, cy + a, cx + h, cy + a - h, p)
     }
 }
