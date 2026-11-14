@@ -58,6 +58,7 @@ class OverlayService : Service() {
     private var minusV: View? = null
     private var gearV: View? = null
     private var closeV: View? = null
+    private var cdView: TextView? = null
     private var dialog: AlertDialog? = null
     private var hidden = false
     private var state = IDLE
@@ -203,6 +204,7 @@ class OverlayService : Service() {
 
         loadNodes()
         buildPanel()
+        buildCountdown()
         uiHandler.post(ticker)
         setState(IDLE)
     }
@@ -478,6 +480,7 @@ class OverlayService : Service() {
 
     private fun setState(s: Int) {
         state = s
+        updateCountdown()
         val pi = playIcon ?: return
         when (s) {
             RUNNING -> pi.set(IconView.PAUSE, Color.rgb(34, 197, 94))
@@ -488,6 +491,139 @@ class OverlayService : Service() {
 
     private fun tickState() {
         if (state == WAITING && System.currentTimeMillis() >= startAt) setState(RUNNING)
+        updateCountdown()
+    }
+
+    private fun buildCountdown() {
+        val v = TextView(this)
+        v.textSize = 22f
+        v.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        v.setTextColor(Color.rgb(160, 168, 190))
+        v.gravity = Gravity.CENTER
+        v.setPadding(ui.dp(14), ui.dp(6), ui.dp(14), ui.dp(6))
+        v.background = ui.rounded(Color.argb(235, 22, 25, 36), 14)
+        val p = Store.prefs(this)
+        val sw = resources.displayMetrics.widthPixels
+        val x = p.getInt("cdx", sw / 2 - ui.dp(60))
+        val y = p.getInt("cdy", ui.dp(48))
+        val lp = makeLp(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            x, y
+        )
+        wm.addView(v, lp)
+        drag(v, v, lp, null, null, {
+            p.edit().putInt("cdx", lp.x).putInt("cdy", lp.y).apply()
+        })
+        cdView = v
+    }
+
+    private fun updateCountdown() {
+        val v = cdView ?: return
+        if (!Store.schedOn(this) || state == RUNNING) {
+            v.visibility = View.GONE
+            return
+        }
+        val now = System.currentTimeMillis()
+        val target = if (state == WAITING) startAt else Store.nextSchedule(this)
+        v.visibility = View.VISIBLE
+        v.text = hms((target - now + 999L) / 1000L)
+        v.setTextColor(
+            if (state == WAITING) Color.rgb(250, 204, 21) else Color.rgb(160, 168, 190)
+        )
+    }
+
+    private fun toggleRun() {
+        if (state == IDLE) startClicking() else stopClicking(false)
+    }
+
+    private fun startClicking() {
+        val svc = ClickService.instance
+        if (svc == null) {
+            Toast.makeText(this, "Aktifkan Accessibility dulu", Toast.LENGTH_LONG).show()
+            return
+        }
+        val p = Store.prefs(this)
+        val defIv = Store.intervalMs(this)
+        val defDelay = if (defIv <= 0L) 150L else defIv
+        val loop = defIv > 0L
+        var at = System.currentTimeMillis()
+        if (p.getBoolean("sched", false)) at = Store.nextSchedule(this)
+        val limMode = p.getInt("limMode", 0)
+        val limVal = p.getInt("limVal", 0)
+        val maxClicks = if (limMode == 1) limVal else 0
+        val maxMs = if (limMode == 2) limVal * 60_000L else 0L
+
+        val steps = nodes.map { n ->
+            val a = centerOf(n.v)
+            val e = n.ev
+            val b = if (e != null) centerOf(e) else a
+            Step(a[0], a[1], n.step.type, b[0], b[1], n.step.durMs, n.step.delayMs, n.step.enabled)
+        }
+
+        svc.onFinish = {
+            setNodesTouchable(true)
+            setState(IDLE)
+        }
+        val ok = svc.start(ClickService.Job(steps, defDelay, loop, at, maxClicks, maxMs))
+        if (!ok) {
+            toast("Tidak ada titik yang aktif")
+            return
+// ---------- status ----------
+
+    private fun setState(s: Int) {
+        state = s
+        updateCountdown()
+        val pi = playIcon ?: return
+        when (s) {
+            RUNNING -> pi.set(IconView.PAUSE, Color.rgb(34, 197, 94))
+            WAITING -> pi.set(IconView.PAUSE, Color.rgb(250, 204, 21))
+            else -> pi.set(IconView.PLAY, Color.rgb(33, 150, 243))
+        }
+    }
+
+    private fun tickState() {
+        if (state == WAITING && System.currentTimeMillis() >= startAt) setState(RUNNING)
+        updateCountdown()
+    }
+
+    private fun buildCountdown() {
+        val v = TextView(this)
+        v.textSize = 22f
+        v.typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        v.setTextColor(Color.rgb(160, 168, 190))
+        v.gravity = Gravity.CENTER
+        v.setPadding(ui.dp(14), ui.dp(6), ui.dp(14), ui.dp(6))
+        v.background = ui.rounded(Color.argb(235, 22, 25, 36), 14)
+        val p = Store.prefs(this)
+        val sw = resources.displayMetrics.widthPixels
+        val x = p.getInt("cdx", sw / 2 - ui.dp(60))
+        val y = p.getInt("cdy", ui.dp(48))
+        val lp = makeLp(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            x, y
+        )
+        wm.addView(v, lp)
+        drag(v, v, lp, null, null, {
+            p.edit().putInt("cdx", lp.x).putInt("cdy", lp.y).apply()
+        })
+        cdView = v
+    }
+
+    private fun updateCountdown() {
+        val v = cdView ?: return
+        if (!Store.schedOn(this) || state == RUNNING) {
+            v.visibility = View.GONE
+            return
+        }
+        val now = System.currentTimeMillis()
+        val target = if (state == WAITING) startAt else Store.nextSchedule(this)
+        v.visibility = View.VISIBLE
+        v.text = hms((target - now + 999L) / 1000L)
+        v.setTextColor(
+            if (state == WAITING) Color.rgb(250, 204, 21) else Color.rgb(160, 168, 190)
+        )
     }
 
     private fun toggleRun() {
@@ -565,8 +701,11 @@ class OverlayService : Service() {
             if (lv != null) wm.removeView(lv)
             val pn = panel
             if (pn != null) wm.removeView(pn)
+            val cv = cdView
+            if (cv != null) wm.removeView(cv)
         }
         panel = null
+        cdView = null
         lineView = null
         instance = null
         stopForeground(STOP_FOREGROUND_REMOVE)
