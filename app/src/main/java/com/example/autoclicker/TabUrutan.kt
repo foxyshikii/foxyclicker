@@ -86,3 +86,44 @@ fun buildUrutan(ui: Ui, act: Activity): TabView {
             }
             list.addView(row, ui.lp(ui.MATCH, ui.WRAP, ui.dp(8)))
         }
+    }
+    fill()
+
+    val add = ui.text("Tambah titik", 15f, Color.WHITE, true)
+    add.gravity = Gravity.CENTER
+    add.background = ui.rounded(pal.acc, 14)
+    add.setOnClickListener {
+        if (steps.size < 20) {
+            val l = steps[steps.size - 1]
+            steps.add(Step(l.x, l.y + ui.dp(64)))
+            commit()
+            fill()
+        }
+    }
+    col.addView(add, ui.lp(ui.MATCH, ui.dp(48), ui.dp(14)))
+    val hint = ui.text(
+        "Tap baris untuk mengubah jenis klik dan jeda. Posisi titik digeser lewat panel melayang.",
+        12f, pal.sub
+    )
+    hint.setPadding(0, ui.dp(10), 0, 0)
+    col.addView(hint)
+
+    fun tick() {
+        if (Store.schedOn(act)) {
+            val rem = Store.nextSchedule(act) - System.currentTimeMillis()
+            ring.progress = 1f - rem / 86_400_000f
+            val sec = rem / 1000L
+            big.text = "-" + hms(sec)
+            val p = Store.prefs(act)
+            small.text = "menuju " + two(p.getInt("h", 7)) + ":" + two(p.getInt("m", 55)) + ":" +
+                two(p.getInt("s", 58))
+        } else {
+            ring.progress = 0f
+            big.text = "Tanpa jadwal"
+            small.text = "Klik mulai saat tombol ▶ ditekan"
+        }
+    }
+    tick()
+
+    return TabView(col) { tick() }
+}
