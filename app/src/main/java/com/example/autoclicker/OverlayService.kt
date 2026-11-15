@@ -1,6 +1,5 @@
 package com.example.autoclicker
 
-import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
@@ -34,6 +33,7 @@ import android.widget.TextView
 import android.widget.Toast
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 class OverlayService : Service() {
     companion object {
@@ -58,6 +58,7 @@ class OverlayService : Service() {
     private var panelLp: WindowManager.LayoutParams? = null
     private var playIcon: IconView? = null
     private var plusV: View? = null
+    private var swipeV: View? = null
     private var minusV: View? = null
     private var gearV: View? = null
     private var closeV: View? = null
@@ -152,15 +153,6 @@ class OverlayService : Service() {
         val loc = IntArray(2)
         v.getLocationOnScreen(loc)
         return floatArrayOf(loc[0] + v.width / 2f, loc[1] + v.height / 2f)
-    }
-
-    private fun withAlpha(c: Int, a: Int): Int = Color.argb(a, Color.red(c), Color.green(c), Color.blue(c))
-
-    private fun circle(color: Int): GradientDrawable {
-        val g = GradientDrawable()
-        g.shape = GradientDrawable.OVAL
-        g.setColor(color)
-        return g
     }
 
     // Batasi posisi jendela agar tidak keluar layar.
@@ -386,7 +378,7 @@ class OverlayService : Service() {
         for (n in nodes) n.v.text = (nodes.indexOf(n) + 1).toString()
     }
 
-    private fun addPoint() {
+    private fun addPoint(type: Int = 0) {
         if (nodes.size >= 20) {
             toast("Maksimal 20 titik")
             return
@@ -403,7 +395,7 @@ class OverlayService : Service() {
                 x += ui.dp(64)
             }
         }
-        addNode(Step(x, y))
+        addNode(Step(x, y, type))
         persist()
     }
 
@@ -495,81 +487,61 @@ class OverlayService : Service() {
         dialog = null
     }
 
-    // ---------- panel (strip vertikal ramping) ----------
+    // ---------- panel (strip vertikal hitam, ikon berwarna) ----------
 
-    private fun icon(kind: Int, color: Int, size: Int = 40, onClick: () -> Unit): IconView {
+    private fun icon(kind: Int, color: Int, onClick: () -> Unit): IconView {
         val v = IconView(this, kind, color)
         v.setOnClickListener { onClick() }
-        val lp = LinearLayout.LayoutParams(ui.dp(size), ui.dp(size))
-        lp.topMargin = ui.dp(2)
-        v.layoutParams = lp
+        v.layoutParams = LinearLayout.LayoutParams(ui.dp(48), ui.dp(48))
         return v
     }
 
     private fun buildPanel() {
-        val tool = pal.barIcon
-        val pi = icon(IconView.PLAY, Color.WHITE, 44) { toggleRun() }
-        pi.background = circle(pal.acc)
+        val pi = icon(IconView.PLAY, Color.rgb(33, 150, 243)) { toggleRun() }
         playIcon = pi
-        val plus = icon(IconView.PLUS, tool) { addPoint() }
-        val minus = icon(IconView.MINUS, tool) { removeLast() }
-        val gear = icon(IconView.GEAR, tool) { openSettings() }
-        val hide = icon(IconView.HIDE, tool) { toggleCollapse() }
-        val close = icon(IconView.CLOSE, Color.rgb(239, 83, 80)) { stopSelf() }
+        val plus = icon(IconView.PLUS, Color.rgb(76, 175, 80)) { addPoint() }
+        val swipe = icon(IconView.SWIPE, Color.rgb(255, 167, 38)) { addPoint(2) }
+        val minus = icon(IconView.MINUS, Color.rgb(244, 67, 54)) { removeLast() }
+        val gear = icon(IconView.GEAR, Color.rgb(160, 168, 190)) { openSettings() }
+        val close = icon(IconView.CLOSE, Color.rgb(244, 67, 54)) { stopSelf() }
         close.visibility = View.GONE
         plusV = plus
+        swipeV = swipe
         minusV = minus
         gearV = gear
         closeV = close
-
-        val grip = HandleView(this, withAlpha(tool, 170))
-        grip.layoutParams = LinearLayout.LayoutParams(ui.dp(44), ui.dp(22))
+        val grip = MoveView(this, Color.rgb(160, 168, 190))
+        grip.layoutParams = LinearLayout.LayoutParams(ui.dp(48), ui.dp(48))
 
         val pn = LinearLayout(this)
         pn.orientation = LinearLayout.VERTICAL
         pn.gravity = Gravity.CENTER_HORIZONTAL
-        pn.setPadding(ui.dp(5), ui.dp(2), ui.dp(5), ui.dp(8))
-        pn.background = ui.rounded(withAlpha(pal.barBg, 245), 22)
-        pn.addView(grip)
+        pn.setPadding(ui.dp(4), ui.dp(6), ui.dp(4), ui.dp(6))
+        pn.background = ui.rounded(Color.argb(235, 22, 25, 36), 14)
         pn.addView(pi)
         pn.addView(plus)
+        pn.addView(swipe)
         pn.addView(minus)
         pn.addView(gear)
-        pn.addView(hide)
         pn.addView(close)
+        pn.addView(grip)
 
         val lp = makeLp(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            ui.dp(4), ui.dp(160)
+            0, ui.dp(160)
         )
         wm.addView(pn, lp)
-        drag(grip, pn, lp, null, null, { snapPanel() })
+        drag(grip, pn, lp, { toggleCollapse() })
         panel = pn
         panelLp = lp
-    }
-
-    // Setelah dilepas, panel meluncur halus ke tepi kiri atau kanan terdekat.
-    private fun snapPanel() {
-        val pn = panel ?: return
-        val lp = panelLp ?: return
-        if (pn.width <= 0) return
-        val sw = resources.displayMetrics.widthPixels
-        val margin = ui.dp(4)
-        val to = if (lp.x + pn.width / 2 < sw / 2) margin else sw - pn.width - margin
-        val a = ValueAnimator.ofInt(lp.x, to)
-        a.duration = 180L
-        a.addUpdateListener {
-            lp.x = it.animatedValue as Int
-            safeUpdate(pn, lp)
-        }
-        a.start()
     }
 
     private fun toggleCollapse() {
         hidden = !hidden
         val full = if (hidden) View.GONE else View.VISIBLE
         plusV?.visibility = full
+        swipeV?.visibility = full
         minusV?.visibility = full
         gearV?.visibility = full
         closeV?.visibility = if (hidden) View.VISIBLE else View.GONE
@@ -592,18 +564,9 @@ class OverlayService : Service() {
         updateCountdown()
         val pi = playIcon ?: return
         when (s) {
-            RUNNING -> {
-                pi.set(IconView.PAUSE, Color.WHITE)
-                pi.background = circle(Color.rgb(34, 197, 94))
-            }
-            WAITING -> {
-                pi.set(IconView.PAUSE, Color.rgb(27, 27, 31))
-                pi.background = circle(Color.rgb(250, 204, 21))
-            }
-            else -> {
-                pi.set(IconView.PLAY, Color.WHITE)
-                pi.background = circle(pal.acc)
-            }
+            RUNNING -> pi.set(IconView.PAUSE, Color.rgb(34, 197, 94))
+            WAITING -> pi.set(IconView.PAUSE, Color.rgb(250, 204, 21))
+            else -> pi.set(IconView.PLAY, Color.rgb(33, 150, 243))
         }
     }
 
@@ -746,20 +709,29 @@ class OverlayService : Service() {
     }
 }
 
-// Pegangan geser: garis pendek membulat di bagian atas strip.
-private class HandleView(ctx: Context, private val color: Int) : View(ctx) {
+private class MoveView(ctx: Context, private val color: Int) : View(ctx) {
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val r = RectF()
 
     override fun onDraw(c: Canvas) {
-        val d = resources.displayMetrics.density
-        val w = 22f * d
-        val h = 4f * d
         val cx = width / 2f
         val cy = height / 2f
+        val r = min(width, height) / 2f
         p.color = color
-        p.style = Paint.Style.FILL
-        r.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
-        c.drawRoundRect(r, h / 2f, h / 2f, p)
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeJoin = Paint.Join.ROUND
+        p.strokeWidth = r * 0.12f
+        val a = r * 0.55f
+        val h = r * 0.2f
+        c.drawLine(cx - a, cy, cx + a, cy, p)
+        c.drawLine(cx, cy - a, cx, cy + a, p)
+        c.drawLine(cx - a, cy, cx - a + h, cy - h, p)
+        c.drawLine(cx - a, cy, cx - a + h, cy + h, p)
+        c.drawLine(cx + a, cy, cx + a - h, cy - h, p)
+        c.drawLine(cx + a, cy, cx + a - h, cy + h, p)
+        c.drawLine(cx, cy - a, cx - h, cy - a + h, p)
+        c.drawLine(cx, cy - a, cx + h, cy - a + h, p)
+        c.drawLine(cx, cy + a, cx - h, cy + a - h, p)
+        c.drawLine(cx, cy + a, cx + h, cy + a - h, p)
     }
 }

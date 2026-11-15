@@ -286,6 +286,7 @@ class IconView(ctx: Context, var kind: Int, var color: Int) : View(ctx) {
         const val HIDE = 5
         const val CLOSE = 6
         const val CURSOR = 7
+        const val SWIPE = 8
     }
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -356,6 +357,20 @@ class IconView(ctx: Context, var kind: Int, var color: Int) : View(ctx) {
                 p.style = Paint.Style.STROKE
                 c.drawLine(cx - r * 0.28f, cy - r * 0.28f, cx + r * 0.28f, cy + r * 0.28f, p)
                 c.drawLine(cx + r * 0.28f, cy - r * 0.28f, cx - r * 0.28f, cy + r * 0.28f, p)
+            }
+            SWIPE -> {
+                p.style = Paint.Style.STROKE
+                path.reset()
+                path.moveTo(cx - r * 0.4f, cy + r * 0.38f)
+                path.quadTo(cx - r * 0.42f, cy - r * 0.3f, cx + r * 0.12f, cy - r * 0.3f)
+                c.drawPath(path, p)
+                p.style = Paint.Style.FILL
+                path.reset()
+                path.moveTo(cx + r * 0.5f, cy - r * 0.3f)
+                path.lineTo(cx + r * 0.18f, cy - r * 0.54f)
+                path.lineTo(cx + r * 0.18f, cy - r * 0.06f)
+                path.close()
+                c.drawPath(path, p)
             }
             CURSOR -> {
                 val k = r * 0.0034f
