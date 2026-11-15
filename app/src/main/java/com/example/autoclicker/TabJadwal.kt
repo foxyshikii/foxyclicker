@@ -4,18 +4,12 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
-import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 fun buildJadwal(ui: Ui, act: Activity): TabView {
     val pal = ui.pal
@@ -51,10 +45,22 @@ fun buildJadwal(ui: Ui, act: Activity): TabView {
     head.addView(tg, LinearLayout.LayoutParams(ui.dp(44), ui.dp(24)))
     c2.addView(head)
 
+    // Jam berjalan (waktu sekarang), diperbarui lewat tick dari MainActivity
+    val clock: TextView = ui.text("", 13f, pal.sub)
+    clock.gravity = Gravity.CENTER
+    c2.addView(clock, ui.lp(ui.MATCH, ui.WRAP, ui.dp(4)))
+
     val cd: TextView = ui.text("", 15f, pal.acc, true)
     cd.gravity = Gravity.CENTER
 
+    fun nowStr(): String {
+        val n = Calendar.getInstance()
+        return two(n.get(Calendar.HOUR_OF_DAY)) + ":" + two(n.get(Calendar.MINUTE)) + ":" +
+            two(n.get(Calendar.SECOND))
+    }
+
     fun upd() {
+        clock.text = "Sekarang " + nowStr()
         if (prefs.getBoolean("sched", false)) {
             val d = (Store.nextSchedule(act) - System.currentTimeMillis()) / 1000L
             cd.text = "Mulai dalam " + hms(d)
@@ -63,18 +69,26 @@ fun buildJadwal(ui: Ui, act: Activity): TabView {
         }
     }
 
-    // Jam berjalan (waktu sekarang)
-    val clock: TextView = ui.text("", 13f, pal.sub)
-    clock.gravity = Gravity.CENTER
-    val fmt = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
-    c2.addView(clock, ui.lp(ui.MATCH, ui.WRAP, ui.dp(4)))
-
     val wh = WheelView(act, 24, "jam", pal.tx, pal.sub)
     val wm = WheelView(act, 60, "mnt", pal.tx, pal.sub)
     val ws = WheelView(act, 60, "dtk", pal.tx, pal.sub)
-    wh.setValue(prefs.getInt("h", 7))
-    wm.setValue(prefs.getInt("m", 55))
-    ws.setValue(prefs.getInt("s", 58))
+    for (w in listOf(wh, wm, ws)) w.accent = pal.acc
+
+    // Roda mulai dari jam sekarang. Kalau jadwal sedang aktif, roda menampilkan jam jadwal tersimpan.
+    if (prefs.getBoolean("sched", false)) {
+        wh.setValue(prefs.getInt("h", 7))
+        wm.setValue(prefs.getInt("m", 55))
+        ws.setValue(prefs.getInt("s", 58))
+    } else {
+        val now = Calendar.getInstance()
+        val nh = now.get(Calendar.HOUR_OF_DAY)
+        val nm = now.get(Calendar.MINUTE)
+        val ns = now.get(Calendar.SECOND)
+        wh.setValue(nh)
+        wm.setValue(nm)
+        ws.setValue(ns)
+        prefs.edit().putInt("h", nh).putInt("m", nm).putInt("s", ns).apply()
+    }
     wh.onChange = {
         prefs.edit().putInt("h", it).apply()
         upd()
@@ -87,31 +101,65 @@ fun buildJadwal(ui: Ui, act: Activity): TabView {
         prefs.edit().putInt("s", it).apply()
         upd()
     }
-
-    // Isi roda dengan jam sekarang, hanya kalau jadwal sedang mati.
-    // Kalau jadwal aktif, roda tetap menampilkan jam jadwal yang tersimpan.
-    fun fillNow() {
-        if (prefs.getBoolean("sched", false)) return
-        val now = Calendar.getInstance()
-        val h = now.get(Calendar.HOUR_OF_DAY)
-        val m = now.get(Calendar.MINUTE)
-        val s = now.get(Calendar.SECOND)
-        wh.setValue(h)
-        wm.setValue(m)
-        ws.setValue(s)
-        prefs.edit().putInt("h", h).putInt("m", m).putInt("s", s).apply()
-    }
-
     val wheels = LinearLayout(act)
     wheels.orientation = LinearLayout.HORIZONTAL
     for (w in listOf(wh, wm, ws)) {
-        wheels.addView(w, LinearLayout.LayoutParams(0, ui.dp(132), 1f))
+        wheels.addView(w, LinearLayout.LayoutParams(0, ui.dp(150), 1f))
     }
+
+    // Tombol geser cepat dari jam yang sedang dipilih di roda
+    val chips = mutableListOf<TextView>()
+    fun shift(sec: Int) {
+        if (!prefs.getBoolean("sched", false)) return
+        val cur = wh.value() * 3600 + wm.value() * 60 + ws.value() + sec
+        val t = ((cur % 86400) + 86400) % 86400
+        wh.animateToValue(t / 3600)
+        wm.animateToValue((t % 3600) / 60)
+        ws.animateToValue(t % 60)
+    }
+    fun toNow() {
+        if (!prefs.getBoolean("sched", false)) return
+        val n = Calendar.getInstance()
+        wh.animateToValue(n.get(Calendar.HOUR_OF_DAY))
+        wm.animateToValue(n.get(Calendar.MINUTE))
+        ws.animateToValue(n.get(Calendar.SECOND))
+    }
+    fun chipRow(items: List<Pair<String, () -> Unit>>): LinearLayout {
+        val row = LinearLayout(act)
+        row.orientation = LinearLayout.HORIZONTAL
+        for ((label, action) in items) {
+            val t = ui.chip(label)
+            t.textSize = 12f
+            t.setPadding(ui.dp(4), ui.dp(8), ui.dp(4), ui.dp(8))
+            ui.paintChip(t, false)
+            t.setOnClickListener { action() }
+            chips.add(t)
+            row.addView(t, ui.lp(0, ui.WRAP, 0, ui.dp(4)).also { it.weight = 1f })
+        }
+        return row
+    }
+    val rowA = chipRow(
+        listOf(
+            "−1 mnt" to { shift(-60) },
+            "−10 dtk" to { shift(-10) },
+            "+10 dtk" to { shift(10) },
+            "+1 mnt" to { shift(60) }
+        )
+    )
+    val rowB = chipRow(
+        listOf(
+            "−5 mnt" to { shift(-300) },
+            "Sekarang" to { toNow() },
+            "+5 mnt" to { shift(300) }
+        )
+    )
+
     fun wheelsOn(on: Boolean) {
         for (w in listOf(wh, wm, ws)) {
             w.isEnabled = on
             w.alpha = if (on) 1f else 0.35f
         }
+        for (t in chips) t.alpha = if (on) 1f else 0.35f
     }
     wheelsOn(tg.checked)
     tg.onChange = {
@@ -119,56 +167,12 @@ fun buildJadwal(ui: Ui, act: Activity): TabView {
         wheelsOn(it)
         upd()
     }
+    upd()
     c2.addView(wheels)
-    c2.addView(cd, ui.lp(ui.MATCH, ui.WRAP, ui.dp(4)))
+    c2.addView(rowA, ui.lp(ui.MATCH, ui.WRAP, ui.dp(6)))
+    c2.addView(rowB, ui.lp(ui.MATCH, ui.WRAP, ui.dp(6)))
+    c2.addView(cd, ui.lp(ui.MATCH, ui.WRAP, ui.dp(10)))
     col.addView(c2)
 
-    // Ticker 1 detik: jam berjalan + hitung mundur.
-    // Jalan hanya selama tampilan menempel di layar, berhenti saat dilepas.
-    val handler = Handler(Looper.getMainLooper())
-    var running = false
-    var wasShown = false
-    val ticker = object : Runnable {
-        override fun run() {
-            if (!running) return
-            clock.text = "Sekarang " + fmt.format(Date())
-            upd()
-            // sejajarkan dengan pergantian detik
-            handler.postDelayed(this, 1000L - System.currentTimeMillis() % 1000L)
-        }
-    }
-    fun startTicker() {
-        if (running) return
-        running = true
-        handler.post(ticker)
-    }
-    fun stopTicker() {
-        running = false
-        handler.removeCallbacks(ticker)
-    }
-    col.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-        override fun onViewAttachedToWindow(v: View) {
-            fillNow()
-            wasShown = col.isShown
-            startTicker()
-        }
-
-        override fun onViewDetachedFromWindow(v: View) {
-            stopTicker()
-            wasShown = false
-        }
-    })
-    if (col.isAttachedToWindow) startTicker()
-
-    clock.text = "Sekarang " + fmt.format(Date())
-    fillNow()
-    upd()
-
-    return TabView(col) {
-        // Saat tab baru ditampilkan (dari tersembunyi), roda diisi jam sekarang lagi.
-        val sh = col.isShown
-        if (sh && !wasShown) fillNow()
-        wasShown = sh
-        upd()
-    }
+    return TabView(col) { upd() }
 }

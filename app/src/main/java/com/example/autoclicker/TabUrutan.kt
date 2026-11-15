@@ -23,8 +23,8 @@ fun buildUrutan(ui: Ui, act: Activity): TabView {
 
     val dial = ui.card("")
     dial.gravity = Gravity.CENTER_HORIZONTAL
-    val ring = RingView(act, pal.acc, pal.off)
-    dial.addView(ring, LinearLayout.LayoutParams(ui.dp(156), ui.dp(156)))
+    val ring = AnalogClockView(act, pal.acc, pal.off)
+    dial.addView(ring, LinearLayout.LayoutParams(ui.dp(176), ui.dp(176)))
     val big = ui.text("", 17f, pal.acc, true)
     big.gravity = Gravity.CENTER
     val small = ui.text("", 11f, pal.sub)

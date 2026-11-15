@@ -10,11 +10,13 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.animation.DecelerateInterpolator
+import java.util.Calendar
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -30,11 +32,16 @@ class WheelView(
     private val subColor: Int
 ) : View(ctx) {
     var onChange: ((Int) -> Unit)? = null
+    var accent: Int = Color.parseColor("#FF5A70")
     private var pos = 0f
+    private var target = 0
+    private var lastTick = 0
     private val density = resources.displayMetrics.density
     private val rowH = 44f * density
     private val textP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val unitP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bandP = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
     private var anim: ValueAnimator? = null
     private var vt: VelocityTracker? = null
     private var lastY = 0f
@@ -52,23 +59,48 @@ class WheelView(
 
     private fun mod(a: Int): Int = ((a % count) + count) % count
 
+    fun value(): Int = mod(if (anim?.isRunning == true) target else pos.roundToInt())
+
     fun setValue(v: Int) {
         anim?.cancel()
         pos = v.toFloat()
+        target = v
         invalidate()
+    }
+
+    fun animateToValue(v: Int) {
+        val cur = if (anim?.isRunning == true) target else pos.roundToInt()
+        var diff = mod(v) - mod(cur)
+        if (diff > count / 2) diff -= count else if (diff < -count / 2) diff += count
+        animateTo(cur + diff, 350L)
     }
 
     override fun onDraw(c: Canvas) {
         val cx = width / 2f
         val cy = height / 2f
+
+        val pad = 6f * density
+        val inset = 3f * density
+        rect.set(pad, cy - rowH / 2f + inset, width - pad, cy + rowH / 2f - inset)
+        val ar = Color.red(accent)
+        val ag = Color.green(accent)
+        val ab = Color.blue(accent)
+        bandP.style = Paint.Style.FILL
+        bandP.color = Color.argb(if (isEnabled) 40 else 20, ar, ag, ab)
+        c.drawRoundRect(rect, 12f * density, 12f * density, bandP)
+        bandP.style = Paint.Style.STROKE
+        bandP.strokeWidth = 1f * density
+        bandP.color = Color.argb(if (isEnabled) 120 else 60, ar, ag, ab)
+        c.drawRoundRect(rect, 12f * density, 12f * density, bandP)
+
         val base = pos.roundToInt()
-        val baseSize = 38f * density
-        for (k in -3..3) {
+        val baseSize = 36f * density
+        for (k in -2..2) {
             val idx = base + k
             val d = abs(idx - pos)
-            val a = max(0f, 1f - d * 0.65f)
+            val a = max(0f, 1f - d * 0.5f)
             if (a <= 0f) continue
-            val s = 1f - min(d, 1f) * 0.4f
+            val s = 1f - min(d, 1f) * 0.3f
             textP.textSize = baseSize * s
             textP.alpha = (a * 255).toInt()
             val y = cy + (idx - pos) * rowH
@@ -90,6 +122,7 @@ class WheelView(
                 vt?.addMovement(e)
                 lastY = e.y
                 moved = 0f
+                lastTick = pos.roundToInt()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -98,6 +131,11 @@ class WheelView(
                 pos += dy / rowH
                 moved += abs(dy)
                 lastY = e.y
+                val r = pos.roundToInt()
+                if (r != lastTick) {
+                    lastTick = r
+                    performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
                 invalidate()
                 return true
             }
@@ -109,8 +147,8 @@ class WheelView(
                 } else {
                     vt?.computeCurrentVelocity(1000)
                     val vy = vt?.yVelocity ?: 0f
-                    val target = (pos + (-vy / rowH) * 0.26f).roundToInt()
-                    animateTo(target, null)
+                    val t = (pos + (-vy / rowH) * 0.26f).roundToInt()
+                    animateTo(t, null)
                 }
                 vt?.recycle()
                 vt = null
@@ -120,10 +158,11 @@ class WheelView(
         return super.onTouchEvent(e)
     }
 
-    private fun animateTo(target: Int, duration: Long?) {
+    private fun animateTo(targetIdx: Int, duration: Long?) {
         anim?.cancel()
+        target = targetIdx
         val from = pos
-        val to = target.toFloat()
+        val to = targetIdx.toFloat()
         val dur = duration ?: min(700L, 260L + (abs(to - from) * 80f).toLong())
         val a = ValueAnimator.ofFloat(from, to)
         a.duration = dur
@@ -332,6 +371,70 @@ class IconView(ctx: Context, var kind: Int, var color: Int) : View(ctx) {
                 c.drawPath(path, p)
             }
         }
+    }
+}
+
+class AnalogClockView(ctx: Context, private val acc: Int, private val track: Int) : View(ctx) {
+    var progress: Float = 0f
+        set(v) {
+            field = v.coerceIn(0f, 1f)
+            invalidate()
+        }
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+    private val d = resources.displayMetrics.density
+
+    private fun hand(c: Canvas, cx: Float, cy: Float, deg: Float, len: Float, w: Float, col: Int) {
+        val a = Math.toRadians(deg.toDouble()).toFloat()
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeWidth = w
+        p.color = col
+        c.drawLine(cx, cy, cx + sin(a) * len, cy - cos(a) * len, p)
+    }
+
+    override fun onDraw(c: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = min(width, height) / 2f - 4f * d
+
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeWidth = 5f * d
+        p.color = track
+        c.drawCircle(cx, cy, r, p)
+        p.color = acc
+        rect.set(cx - r, cy - r, cx + r, cy + r)
+        c.drawArc(rect, -90f, 360f * progress, false, p)
+
+        val rd = r - 9f * d
+        p.style = Paint.Style.FILL
+        p.color = Color.parseColor("#2B2B31")
+        c.drawCircle(cx, cy, rd, p)
+
+        p.style = Paint.Style.STROKE
+        p.strokeCap = Paint.Cap.BUTT
+        for (i in 0 until 60) {
+            val major = i % 5 == 0
+            val a = (i * Math.PI / 30.0).toFloat()
+            val r1 = rd - (if (major) 11f else 7f) * d
+            val r2 = rd - 3f * d
+            p.strokeWidth = (if (major) 2f else 1f) * d
+            p.color = Color.parseColor(if (major) "#A0A0AA" else "#70707A")
+            c.drawLine(cx + sin(a) * r1, cy - cos(a) * r1, cx + sin(a) * r2, cy - cos(a) * r2, p)
+        }
+
+        val now = Calendar.getInstance()
+        val h = now.get(Calendar.HOUR)
+        val m = now.get(Calendar.MINUTE)
+        val s = now.get(Calendar.SECOND)
+        val handCol = Color.parseColor("#EDEDF0")
+        hand(c, cx, cy, (h + m / 60f) * 30f, rd * 0.5f, 4.5f * d, handCol)
+        hand(c, cx, cy, (m + s / 60f) * 6f, rd * 0.74f, 3f * d, handCol)
+        hand(c, cx, cy, s * 6f, rd * 0.82f, 1.6f * d, acc)
+        p.style = Paint.Style.FILL
+        p.color = acc
+        c.drawCircle(cx, cy, 4.5f * d, p)
     }
 }
 
